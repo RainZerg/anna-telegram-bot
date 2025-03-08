@@ -1,10 +1,10 @@
 """
 Payment Handler for Course Sales Bot
-Created by RainZerg on 2025-03-08 10:25:49 UTC
+Created by RainZerg on 2025-03-08 12:56:07 UTC
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 import logging
 from telegram import LabeledPrice, Update, ChatInviteLink
 from telegram.ext import ContextTypes
@@ -15,7 +15,8 @@ from text_constants import (
     COURSE_DESCRIPTION,
     COURSE_TITLE,
     ACCESS_PAYMENT_SUCCESS,
-    ACCESS_PAYMENT_SUCCESS_NO_LINK
+    ACCESS_PAYMENT_SUCCESS_NO_LINK,
+    escape_markdown
 )
 
 logger = logging.getLogger(__name__)
@@ -28,11 +29,18 @@ class CustomerInfo:
     inn: Optional[str] = None
 
 class PaymentHandler:
-    def __init__(self, provider_token: str, currency: str, students_chat_id: str):
+    def __init__(
+        self, 
+        provider_token: str, 
+        currency: str, 
+        students_chat_id: str,
+        handle_successful_payment: Optional[Callable] = None
+    ):
         self.provider_token = provider_token
         self.currency = currency
         self.students_chat_id = students_chat_id
         self.db = Database()
+        self._custom_payment_handler = handle_successful_payment
 
     def create_invoice_payload(self, 
                              chat_id: int, 
@@ -87,8 +95,8 @@ class PaymentHandler:
 
         invoice_payload = self.create_invoice_payload(
             chat_id=chat_id,
-            title=COURSE_TITLE,  # Using from text_constants
-            description=COURSE_DESCRIPTION,  # Using from text_constants
+            title=COURSE_TITLE,
+            description=COURSE_DESCRIPTION,
             amount=config.COURSE_PRICE,
             customer_info=customer_info
         )
@@ -99,19 +107,13 @@ class PaymentHandler:
             logger.error(f"Error sending invoice: {e}")
             raise
 
-    async def add_user_to_students_chat(self, 
-                                      update: Update, 
-                                      context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
-        """
-        Adds user to the students' chat and returns invite link
-        """
-        user_id = update.effective_user.id
-
+    async def create_invite_link(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
+        """Get existing or create new invite link"""
         # First check if user already has an invite link
         existing_link = self.db.get_chat_invite(user_id)
         if existing_link:
             return existing_link
-
+            
         try:
             # Create new invite link
             invite_link = await context.bot.create_chat_invite_link(
@@ -125,8 +127,8 @@ class PaymentHandler:
 
             return invite_link.invite_link
 
-        except TelegramError as e:
-            logger.error(f"Failed to handle chat invitation: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create invite link for user {user_id}: {e}")
             return None
 
     async def handle_pre_checkout_query(self, 
@@ -146,7 +148,7 @@ class PaymentHandler:
     async def handle_successful_payment(self, 
                                       update: Update, 
                                       context: ContextTypes.DEFAULT_TYPE):
-        """Handles successful payment and adds user to students chat"""
+        """Handles successful payment"""
         user = update.effective_user
         payment_info = update.message.successful_payment
 
@@ -164,37 +166,35 @@ class PaymentHandler:
             )
             logger.info(f"Successfully recorded payment for user {user.id}")
 
-        except Exception as e:
-            logger.error(f"Failed to record payment for user {user.id}: {e}")
-
-        # Generate or get existing invite link
-        invite_link = await self.add_user_to_students_chat(update, context)
-
-        try:
-            if invite_link:
-                logger.info(f"Sending success message with invite link to user {user.id}")
-                await update.message.reply_text(
-                    ACCESS_PAYMENT_SUCCESS.format(
-                        transaction_id=payment_info.provider_payment_charge_id,
-                        invite_link=invite_link
-                    ),
-                    parse_mode='MarkdownV2'  # Changed from 'Markdown' to 'MarkdownV2'
-                )
+            # If custom payment handler is provided, use it
+            if self._custom_payment_handler:
+                await self._custom_payment_handler(update, context)
             else:
-                logger.error(f"Failed to generate invite link for user {user.id}")
-                await update.message.reply_text(
-                    ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
-                        transaction_id=payment_info.provider_payment_charge_id
-                    ),
-                    parse_mode='MarkdownV2'  # Changed from 'Markdown' to 'MarkdownV2'
-                )
+                # Generate or get existing invite link
+                invite_link = await self.create_invite_link(user.id, context)  # Pass context here
+                
+                if invite_link:
+                    escaped_link = escape_markdown(invite_link)
+                    await update.message.reply_text(
+                        ACCESS_PAYMENT_SUCCESS.format(
+                            transaction_id=payment_info.provider_payment_charge_id,
+                            invite_link=escaped_link
+                        ),
+                        parse_mode='MarkdownV2'
+                    )
+                else:
+                    await update.message.reply_text(
+                        ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
+                            transaction_id=payment_info.provider_payment_charge_id
+                        ),
+                        parse_mode='MarkdownV2'
+                    )
+
         except Exception as e:
-            logger.error(f"Failed to send success message: {e}")
-            # Fallback to plain text
+            logger.error(f"Failed to process payment for user {user.id}: {e}")
             await update.message.reply_text(
                 f"Спасибо за покупку! Ваша транзакция успешно завершена.\n"
-                f"ID транзакции: {payment_info.provider_payment_charge_id}\n"
-                f"{'Ссылка для входа: ' + invite_link if invite_link else 'Ссылка будет отправлена позже.'}"
+                f"ID транзакции: {payment_info.provider_payment_charge_id}"
             )
 
     async def get_access_status(self, user_id: int) -> tuple[bool, Optional[str]]:
