@@ -47,18 +47,29 @@ logger = logging.getLogger(__name__)
 
 async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle successful payment"""
-    user_id = update.effective_user.id
-    transaction_id = update.message.successful_payment.provider_payment_charge_id
+    user = update.effective_user
+    payment_info = update.message.successful_payment
 
     try:
-        # Generate invite link - pass both user_id and context
-        invite_link = await payment_handler.create_invite_link(user_id, context)
+        # First record the payment in the database
+        payment_handler.db.record_payment(
+            user_id=user.id,
+            username=user.username,
+            customer_info=context.user_data,
+            transaction_id=payment_info.provider_payment_charge_id,
+            amount=payment_info.total_amount / 100,
+            currency=payment_info.currency
+        )
+        logger.info(f"Successfully recorded payment for user {user.id}")
+
+        # Then generate invite link
+        invite_link = await payment_handler.create_invite_link(user.id, context)
         
         if invite_link:
             escaped_link = escape_markdown(invite_link)
             await update.message.reply_text(
                 text_constants.ACCESS_PAYMENT_SUCCESS.format(
-                    transaction_id=transaction_id,
+                    transaction_id=payment_info.provider_payment_charge_id,
                     invite_link=escaped_link
                 ),
                 parse_mode='MarkdownV2'
@@ -66,13 +77,13 @@ async def handle_successful_payment(update: Update, context: ContextTypes.DEFAUL
         else:
             await update.message.reply_text(
                 text_constants.ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
-                    transaction_id=transaction_id
+                    transaction_id=payment_info.provider_payment_charge_id
                 ),
                 parse_mode='MarkdownV2'
             )
 
         # Update keyboard immediately after successful payment
-        keyboard = await get_start_keyboard(user_id)
+        keyboard = await get_start_keyboard(user.id)
         await update.message.reply_text(
             text_constants.MENU_UPDATED,
             parse_mode='MarkdownV2',
