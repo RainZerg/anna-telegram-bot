@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    volumes:
+      - ./media:/app/media
+      - ./data:/app/data
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - YOOMONEY_PROVIDER_TOKEN=${YOOMONEY_PROVIDER_TOKEN}
+      - STUDENTS_CHAT_ID=${STUDENTS_CHAT_ID}
+    restart: unless-stopped
