@@ -113,8 +113,10 @@ class PaymentHandler:
             # First check if user already has an invite link
             existing_link = self.db.get_chat_invite(user_id)
             if existing_link:
+                logger.info(f"Found existing invite link for user {user_id}")
                 return existing_link
                 
+            logger.info(f"Creating new invite link for user {user_id}")
             # Create new invite link
             chat_invite = await context.bot.create_chat_invite_link(
                 chat_id=self.students_chat_id,
@@ -124,11 +126,14 @@ class PaymentHandler:
 
             # Store and return the invite link
             invite_link = chat_invite.invite_link
+            logger.info(f"Successfully created new invite link for user {user_id}")
             self.db.record_chat_invite(user_id, invite_link)
             return invite_link
 
         except Exception as e:
             logger.error(f"Failed to create invite link for user {user_id}: {e}")
+            if isinstance(e, TelegramError):
+                logger.error(f"Telegram error details: {e.message}")
             return None
 
     async def handle_pre_checkout_query(self, 

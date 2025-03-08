@@ -156,7 +156,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             has_paid, invite_link = await payment_handler.get_access_status(user_id)
 
             if has_paid and message_text == MENU_ACCESS:
-                # Handle access button
+                # If no invite link exists, try to create one
+                if not invite_link:
+                    invite_link = await payment_handler.create_invite_link(user_id, context)
+
                 escaped_link = escape_markdown(invite_link) if invite_link else None
                 if escaped_link:
                     await update.message.reply_text(
@@ -359,6 +362,10 @@ async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if has_paid:
+            # If no invite link exists, try to create one
+            if not invite_link:
+                invite_link = await payment_handler.create_invite_link(user_id, context)
+                
             if invite_link:
                 escaped_link = escape_markdown(invite_link)
                 await update.message.reply_text(
