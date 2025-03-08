@@ -442,7 +442,7 @@ def main():
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
         application.add_handler(MessageHandler(
             filters.SUCCESSFUL_PAYMENT, 
-            payment_handler.handle_successful_payment
+            handle_successful_payment  # Use our custom handler instead of payment_handler's
         ))
 
         # Add general message handler for menu options LAST

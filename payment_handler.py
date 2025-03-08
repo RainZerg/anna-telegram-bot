@@ -109,23 +109,23 @@ class PaymentHandler:
 
     async def create_invite_link(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> Optional[str]:
         """Get existing or create new invite link"""
-        # First check if user already has an invite link
-        existing_link = self.db.get_chat_invite(user_id)
-        if existing_link:
-            return existing_link
-            
         try:
+            # First check if user already has an invite link
+            existing_link = self.db.get_chat_invite(user_id)
+            if existing_link:
+                return existing_link
+                
             # Create new invite link
-            invite_link = await context.bot.create_chat_invite_link(
+            chat_invite = await context.bot.create_chat_invite_link(
                 chat_id=self.students_chat_id,
                 member_limit=1,
                 expire_date=None
             )
 
-            # Store the invite link
-            self.db.record_chat_invite(user_id, invite_link.invite_link)
-
-            return invite_link.invite_link
+            # Store and return the invite link
+            invite_link = chat_invite.invite_link
+            self.db.record_chat_invite(user_id, invite_link)
+            return invite_link
 
         except Exception as e:
             logger.error(f"Failed to create invite link for user {user_id}: {e}")
@@ -169,26 +169,27 @@ class PaymentHandler:
             # If custom payment handler is provided, use it
             if self._custom_payment_handler:
                 await self._custom_payment_handler(update, context)
+                return
+
+            # Otherwise use default handling...
+            invite_link = await self.create_invite_link(user.id, context)
+            
+            if invite_link:
+                escaped_link = escape_markdown(invite_link)
+                await update.message.reply_text(
+                    ACCESS_PAYMENT_SUCCESS.format(
+                        transaction_id=payment_info.provider_payment_charge_id,
+                        invite_link=escaped_link
+                    ),
+                    parse_mode='MarkdownV2'
+                )
             else:
-                # Generate or get existing invite link
-                invite_link = await self.create_invite_link(user.id, context)  # Pass context here
-                
-                if invite_link:
-                    escaped_link = escape_markdown(invite_link)
-                    await update.message.reply_text(
-                        ACCESS_PAYMENT_SUCCESS.format(
-                            transaction_id=payment_info.provider_payment_charge_id,
-                            invite_link=escaped_link
-                        ),
-                        parse_mode='MarkdownV2'
-                    )
-                else:
-                    await update.message.reply_text(
-                        ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
-                            transaction_id=payment_info.provider_payment_charge_id
-                        ),
-                        parse_mode='MarkdownV2'
-                    )
+                await update.message.reply_text(
+                    ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
+                        transaction_id=payment_info.provider_payment_charge_id
+                    ),
+                    parse_mode='MarkdownV2'
+                )
 
         except Exception as e:
             logger.error(f"Failed to process payment for user {user.id}: {e}")
