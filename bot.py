@@ -422,11 +422,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    """Start the bot"""
-    if not config.TOKEN or not config.PROVIDER_TOKEN or not config.STUDENTS_CHAT_ID:
-        logger.error("Missing required configuration!")
-        return
-
     try:
         application = Application.builder().token(config.TOKEN).build()
 
@@ -445,8 +440,8 @@ def main():
                 AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)],
                 AWAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)],
                 AWAITING_PHONE: [
-                    MessageHandler(filters.CONTACT, handle_phone),  # Handle contact sharing
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)  # Handle manual input
+                    MessageHandler(filters.CONTACT, handle_phone),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
                 ],
             },
             fallbacks=[
@@ -458,15 +453,17 @@ def main():
         # Add payment handlers
         application.add_handler(payment_conv_handler)
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
+        application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
+        
+        # Add handler for menu buttons BEFORE the general message handler
         application.add_handler(MessageHandler(
-            filters.SUCCESSFUL_PAYMENT, 
-            handle_successful_payment  # Use our custom handler instead of payment_handler's
+            filters.Regex(f'^({MENU_PURCHASE}|{MENU_ACCESS}|{MENU_ABOUT_COURSE}|{MENU_ABOUT_LECTURER})$'),
+            handle_message
         ))
 
-        # Add general message handler for menu options LAST
+        # Add general message handler for all other text messages LAST
         application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & 
-            ~filters.Regex(f'^({MENU_PURCHASE}|{MENU_ACCESS})$'),
+            filters.TEXT & ~filters.COMMAND,
             handle_message
         ))
 
