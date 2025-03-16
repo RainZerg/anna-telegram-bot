@@ -72,25 +72,6 @@ jobs:
             --exclude='data/*' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
 
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -rf ~/.ssh/
-
-      - name: Deploy to VPS
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          echo "Creating project directory on VPS..."
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot"
-          
-          echo "Syncing repository to VPS..."
-          rsync -avz --progress --delete \
-            --exclude='.env' \
-            --exclude='media/*' \
-            --exclude='data/*' \
-            ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
-
       - name: Configure and start bot
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
@@ -114,4 +95,4 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up sensitive files..."
-          rm -f ~/.ssh/deploy_key
+          rm -f ~/.ssh/
