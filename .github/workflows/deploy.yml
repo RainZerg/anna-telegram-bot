@@ -25,62 +25,53 @@ jobs:
 
       - name: Configure SSH
         run: |
-          # Create .ssh directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
-          # Write SSH key
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          
-          # Write known hosts directly
-          echo "${{ secrets.SSH_HOST }} $(ssh-keyscan ${{ secrets.SSH_HOST }} 2>/dev/null | grep -v '^#')" > ~/.ssh/known_hosts
+          echo "${{ secrets.SSH_HOST }} $(ssh-keyscan ${{ secrets.SSH_HOST }} 2>/dev/null)" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
-          
-          # Create strict SSH config
-          cat > ~/.ssh/config << EOF
-          Host ${{ secrets.SSH_HOST }}
-            HostName ${{ secrets.SSH_HOST }}
-            User ${{ secrets.SSH_USERNAME }}
-            IdentityFile ~/.ssh/id_rsa
-            StrictHostKeyChecking accept-new
-            UserKnownHostsFile ~/.ssh/known_hosts
-          EOF
-          chmod 600 ~/.ssh/config
-          
-          # Debug: Show SSH files
-          ls -la ~/.ssh/
 
-      - name: Test SSH Connection
+      - name: Create required directories and files
         run: |
-          # First, verify the host key
-          ssh-keyscan -H ${{ secrets.SSH_HOST }}
+          # Create media directory if it doesn't exist
+          mkdir -p media
           
-          # Then test connection with detailed output
-          ssh -vvv ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'Connection test successful'"
+          # Create a default cover image if it doesn't exist
+          if [ ! -f media/cover_image.jpg ]; then
+            echo "Creating default cover image..."
+            convert -size 800x400 xc:gray -pointsize 40 -gravity center \
+              -draw "text 0,0 'Default Cover Image'" \
+              media/cover_image.jpg || {
+              echo "Failed to create cover image with ImageMagick, using wget instead..."
+              wget https://via.placeholder.com/800x400.jpg -O media/cover_image.jpg
+            }
+          fi
+          
+          # Create data directory if it doesn't exist
+          mkdir -p data
 
       - name: Deploy to VPS
-        if: success()
         run: |
           echo "Creating project directory on VPS..."
-          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot"
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot/media ~/anna-telegram-bot/data"
           
           echo "Syncing repository to VPS..."
           rsync -avz --delete \
             --exclude='.env' \
-            --exclude='media/*' \
-            --exclude='data/*' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
 
-      - name: Configure and start bot
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+      - name: Setup and start bot
         run: |
           echo "Setting up permissions and starting bot..."
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             chmod +x start.sh stop.sh entrypoint.sh && \
-            ./stop.sh || true && \
-            ./start.sh"
+            docker compose down || true && \
+            docker compose pull && \
+            docker compose up -d && \
+            sleep 5 && \
+            docker compose ps && \
+            docker compose logs --tail=50"
 
       - name: Check deployment status
         env:
