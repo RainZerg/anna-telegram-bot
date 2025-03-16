@@ -1,0 +1,25 @@
+name: Test SSH Connection
+
+on:
+  workflow_dispatch:  # This allows manual trigger
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          eval $(ssh-agent -s)
+          echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/deploy_key
+          echo "StrictHostKeyChecking no" > ~/.ssh/config
+
+      - name: Test SSH connection
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!' && pwd"
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
