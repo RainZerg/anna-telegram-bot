@@ -17,6 +17,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,11 +30,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           eval $(ssh-agent -s)
           echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/deploy_key
-          echo "Host *" > ~/.ssh/config
-          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "  IdentityFile ~/.ssh/deploy_key" >> ~/.ssh/config
-          ls -la ~/.ssh
-          ssh-add -l
+          echo "StrictHostKeyChecking no" > ~/.ssh/config
 
       - name: Test SSH Connection
         run: |
