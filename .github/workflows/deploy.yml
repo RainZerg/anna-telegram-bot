@@ -23,63 +23,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up SSH key with passphrase
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          # Start SSH agent
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
-          
-          # Create .ssh directory with correct permissions
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # Write the private key to a file
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          # Write known hosts
-          echo "${{ secrets.SSH_HOST }} $(ssh-keyscan -t ed25519 ${{ secrets.SSH_HOST }} 2>/dev/null)" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          
-          # Add the key to SSH agent with passphrase
-          expect << 'EOF'
-            spawn ssh-add ~/.ssh/deploy_key
-            expect "Enter passphrase"
-            send "${{ secrets.SSH_KEY_PASSPHRASE }}\r"
-            expect eof
-EOF
-
-      - name: Test SSH Connection
-        env:
-          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
-        run: |
-          echo "Testing SSH connection..."
-          ssh -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
-name: Deploy Telegram Bot
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy to'
-        required: true
-        default: 'production'
-        type: choice
-        options:
-        - production
-        - staging
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment || 'production' }}
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y expect
 
       - name: Set up SSH key with passphrase
         env:
@@ -96,107 +41,54 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          # Write known hosts
-          echo "${{ secrets.SSH_HOST }} $(ssh-keyscan -t ed25519 ${{ secrets.SSH_HOST }} 2>/dev/null)" >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          # Add key to SSH agent with passphrase using expect
+          expect -f - <<'EOD'
+          spawn ssh-add ~/.ssh/deploy_key
+          expect "Enter passphrase"
+          send "${{ secrets.SSH_KEY_PASSPHRASE }}\n"
+          expect eof
+          EOD
           
-          # Add the key to SSH agent with passphrase
-          expect << 'EOF'
-            spawn ssh-add ~/.ssh/deploy_key
-            expect "Enter passphrase"
-            send "${{ secrets.SSH_KEY_PASSPHRASE }}\r"
-            expect eof
-EOF
+          # Add host to known hosts
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: Test SSH Connection
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           echo "Testing SSH connection..."
-          ssh -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Run tests (if any)
-        run: |
-          if [ -f tests/test_*.py ]; then
-            python -m pytest
-          fi
-        continue-on-error: true
-
-      - name: Backup existing .env and data
-        run: |
-          echo "Creating backup directory..."
-          mkdir -p ~/backups
-          
-          echo "Backing up .env file..."
-          scp -v -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env ~/backups/env.backup || echo "No .env file to backup"
-          
-          echo "Backing up media directory..."
-          scp -v -r -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media ~/backups/media.backup || echo "No media directory to backup"
-          
-          echo "Backing up data directory..."
-          scp -v -r -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data ~/backups/data.backup || echo "No data directory to backup"
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
 
       - name: Deploy to VPS
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           echo "Creating project directory on VPS..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot"
-          
-          echo "Installing rsync on VPS if not present..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "which rsync || sudo apt-get update && sudo apt-get install -y rsync"
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot"
           
           echo "Syncing repository to VPS..."
           rsync -avz --progress --delete \
             --exclude='.env' \
             --exclude='media/*' \
             --exclude='data/*' \
-            -e "ssh -i ~/.ssh/deploy_key" \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
-          
-          echo "Sync completed."
 
-      - name: Restore backups and restart bot
+      - name: Configure and start bot
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
-          echo "Restoring backups..."
-          
-          if [ -f ~/backups/env.backup ]; then
-            echo "Restoring .env file..."
-            scp -v -i ~/.ssh/deploy_key ~/backups/env.backup ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env
-          fi
-          
-          if [ -d ~/backups/media.backup ]; then
-            echo "Restoring media directory..."
-            ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot/media"
-            scp -v -r -i ~/.ssh/deploy_key ~/backups/media.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media/ || echo "No media files to restore"
-          fi
-          
-          if [ -d ~/backups/data.backup ]; then
-            echo "Restoring data directory..."
-            ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot/data"
-            scp -v -r -i ~/.ssh/deploy_key ~/backups/data.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data/ || echo "No data files to restore"
-          fi
-          
-          echo "Setting permissions and restarting bot..."
-          ssh -v -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
+          echo "Setting up permissions and starting bot..."
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             chmod +x start.sh stop.sh entrypoint.sh && \
-            echo 'Stopping old bot instance...' && \
-            ./stop.sh && \
-            echo 'Starting new bot instance...' && \
+            ./stop.sh || true && \
             ./start.sh"
 
       - name: Check deployment status
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           echo "Checking deployment status..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
+          ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             docker compose ps && \
             docker compose logs --tail=50"
 
@@ -205,4 +97,3 @@ EOF
         run: |
           echo "Cleaning up sensitive files..."
           rm -f ~/.ssh/deploy_key
-          rm -rf ~/backups
