@@ -23,37 +23,49 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up SSH key
+      - name: Set up SSH
         run: |
-          # Setup SSH directory
+          # Create .ssh directory with proper permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write private key to standard SSH key file
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_rsa
+          # Create empty key file first with proper permissions
+          touch ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Add host to known hosts
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          # Write the key content
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           
-          # Create SSH config file
-          cat > ~/.ssh/config << EOF
-          Host *
-            IdentityFile ~/.ssh/id_rsa
-            UserKnownHostsFile ~/.ssh/known_hosts
-            StrictHostKeyChecking no
-          EOF
+          # Create and secure config file
+          touch ~/.ssh/config
           chmod 600 ~/.ssh/config
+          echo "Host *
+            IdentityFile ~/.ssh/id_rsa
+            StrictHostKeyChecking no
+            UserKnownHostsFile ~/.ssh/known_hosts" > ~/.ssh/config
           
-          # If key has a passphrase, add it to ssh-agent
+          # Create and secure known_hosts
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          
+          # Start SSH agent
           eval "$(ssh-agent -s)"
-          echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/usr/bin/ssh-add ~/.ssh/id_rsa
+          
+          # Add key to agent (without passphrase for now)
+          ssh-add ~/.ssh/id_rsa
 
       - name: Test SSH Connection
         run: |
-          # Test with verbose output and explicit key file
-          ssh -v -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+          # Test connection with verbose output
+          ssh -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+          rm -f ~/.ssh/config
+          rm -f ~/.ssh/known_hosts
 
       - name: Deploy to VPS
         env:
