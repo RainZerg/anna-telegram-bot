@@ -19,6 +19,7 @@ from text_constants import (
     escape_markdown
 )
 
+INVOICE_DESCRIPTION = "Полный доступ к курсу. Включает все материалы и поддержку."
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -96,7 +97,7 @@ class PaymentHandler:
         invoice_payload = self.create_invoice_payload(
             chat_id=chat_id,
             title=COURSE_TITLE,
-            description=COURSE_DESCRIPTION,
+            description=INVOICE_DESCRIPTION,
             amount=config.COURSE_PRICE,
             customer_info=customer_info
         )
