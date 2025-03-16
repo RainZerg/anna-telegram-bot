@@ -23,46 +23,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install expect
-        run: sudo apt-get update && sudo apt-get install -y expect
-
       - name: Set up SSH key
         run: |
           # Setup SSH directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write private key to file
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          # Start SSH agent
-          eval "$(ssh-agent -s)"
-          
-          # Create expect script
-          cat > ~/add_key.exp << 'EOF'
-          #!/usr/bin/expect -f
-          spawn ssh-add /home/runner/.ssh/deploy_key
-          expect "Enter passphrase"
-          send "${{ secrets.SSH_KEY_PASSPHRASE }}\r"
-          expect eof
-          EOF
-          
-          chmod +x ~/add_key.exp
-          
-          # Run expect script
-          ~/add_key.exp
+          # Write private key to standard SSH key file
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           
           # Add host to known hosts
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
           
-          # Verify SSH agent has the key
-          ssh-add -l
+          # Create SSH config file
+          cat > ~/.ssh/config << EOF
+          Host *
+            IdentityFile ~/.ssh/id_rsa
+            UserKnownHostsFile ~/.ssh/known_hosts
+            StrictHostKeyChecking no
+          EOF
+          chmod 600 ~/.ssh/config
+          
+          # If key has a passphrase, add it to ssh-agent
+          eval "$(ssh-agent -s)"
+          echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/usr/bin/ssh-add ~/.ssh/id_rsa
 
       - name: Test SSH Connection
         run: |
-          ssh -o StrictHostKeyChecking=no -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+          # Test with verbose output and explicit key file
+          ssh -v -i ~/.ssh/id_rsa ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
 
       - name: Deploy to VPS
         env:
