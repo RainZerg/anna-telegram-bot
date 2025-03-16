@@ -47,6 +47,8 @@ jobs:
           # Create and secure known_hosts
           touch ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+          
+          # Add host key to known_hosts
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
           
           # Start SSH agent
