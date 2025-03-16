@@ -28,7 +28,7 @@ from text_constants import (
     ALREADY_PURCHASED, ACCESS_SUCCESS, ACCESS_SUCCESS_NO_LINK,
     ACCESS_NOT_PURCHASED, HELP_TEXT, GENERAL_ERROR,
     COURSE_DESCRIPTION, LECTURER_INFO, MENU_UPDATED,
-    ACCESS_PAYMENT_SUCCESS, ACCESS_PAYMENT_SUCCESS_NO_LINK,
+    ACCESS_PAYMENT_SUCCESS, ACCESS_PAYMENT_SUCCESS_NO_LINK, MENU_CONTACT, CONTACT_MESSAGE, WRITE_BUTTON,
     escape_markdown
 )
 from payment_handler import PaymentHandler, CustomerInfo
@@ -110,8 +110,17 @@ async def get_start_keyboard(user_id: int):
         [KeyboardButton(MENU_ABOUT_COURSE)],
         [KeyboardButton(MENU_ABOUT_LECTURER)],
         [KeyboardButton(MENU_ACCESS if has_paid else MENU_PURCHASE)]
+        [KeyboardButton(MENU_CONTACT)]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_contact_buttons():
+    """Creates an inline keyboard with write and back buttons"""
+    keyboard = [
+        [InlineKeyboardButton(WRITE_BUTTON, url="https://t.me/Kalypina")],
+        [InlineKeyboardButton(BACK_BUTTON, callback_data="start")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 def get_back_button():
     """Creates an inline keyboard with just a back button"""
@@ -162,6 +171,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=LECTURER_INFO,
                 parse_mode='MarkdownV2',
                 reply_markup=get_back_button()
+            )
+        
+        elif message_text == MENU_CONTACT:
+            await update.message.reply_text(
+                CONTACT_MESSAGE,
+                reply_markup=get_contact_buttons()
             )
 
         elif message_text in [MENU_PURCHASE, MENU_ACCESS]:
