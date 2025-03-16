@@ -30,6 +30,11 @@ jobs:
           echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/deploy_key
           echo "StrictHostKeyChecking no" > ~/.ssh/config
 
+      - name: Test SSH Connection
+        run: |
+          echo "Testing SSH connection..."
+          ssh -i ~/.ssh/deploy_key -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -49,47 +54,68 @@ jobs:
 
       - name: Backup existing .env and data
         run: |
-          scp -i ~/.ssh/deploy_key -r ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env ~/env.backup || true
-          scp -i ~/.ssh/deploy_key -r ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media ~/media.backup || true
-          scp -i ~/.ssh/deploy_key -r ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data ~/data.backup || true
+          echo "Creating backup directory..."
+          mkdir -p ~/backups
+          
+          echo "Backing up .env file..."
+          scp -v -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env ~/backups/env.backup || echo "No .env file to backup"
+          
+          echo "Backing up media directory..."
+          scp -v -r -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media ~/backups/media.backup || echo "No media directory to backup"
+          
+          echo "Backing up data directory..."
+          scp -v -r -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data ~/backups/data.backup || echo "No data directory to backup"
 
       - name: Deploy to VPS
         run: |
-          # Create necessary directories on VPS
+          echo "Creating project directory on VPS..."
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot"
           
-          # Sync repository to VPS (excluding sensitive files)
-          rsync -av --delete \
+          echo "Installing rsync on VPS if not present..."
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "which rsync || sudo apt-get update && sudo apt-get install -y rsync"
+          
+          echo "Syncing repository to VPS..."
+          rsync -avz --progress --delete \
             --exclude='.env' \
             --exclude='media/*' \
             --exclude='data/*' \
+            -e "ssh -i ~/.ssh/deploy_key" \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
+          
+          echo "Sync completed."
 
       - name: Restore backups and restart bot
         run: |
-          # Restore backups
-          if [ -f ~/env.backup ]; then
-            scp -i ~/.ssh/deploy_key ~/env.backup ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env
+          echo "Restoring backups..."
+          
+          if [ -f ~/backups/env.backup ]; then
+            echo "Restoring .env file..."
+            scp -v -i ~/.ssh/deploy_key ~/backups/env.backup ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/.env
           fi
           
-          if [ -d ~/media.backup ]; then
+          if [ -d ~/backups/media.backup ]; then
+            echo "Restoring media directory..."
             ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot/media"
-            scp -i ~/.ssh/deploy_key -r ~/media.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media/
+            scp -v -r -i ~/.ssh/deploy_key ~/backups/media.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/media/ || echo "No media files to restore"
           fi
           
-          if [ -d ~/data.backup ]; then
+          if [ -d ~/backups/data.backup ]; then
+            echo "Restoring data directory..."
             ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "mkdir -p ~/anna-telegram-bot/data"
-            scp -i ~/.ssh/deploy_key -r ~/data.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data/
+            scp -v -r -i ~/.ssh/deploy_key ~/backups/data.backup/* ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/data/ || echo "No data files to restore"
           fi
           
-          # Set permissions and restart bot
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
+          echo "Setting permissions and restarting bot..."
+          ssh -v -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             chmod +x start.sh stop.sh entrypoint.sh && \
+            echo 'Stopping old bot instance...' && \
             ./stop.sh && \
+            echo 'Starting new bot instance...' && \
             ./start.sh"
 
       - name: Check deployment status
         run: |
+          echo "Checking deployment status..."
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             docker compose ps && \
             docker compose logs --tail=50"
@@ -97,5 +123,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
+          echo "Cleaning up sensitive files..."
           rm -f ~/.ssh/deploy_key
-          rm -rf ~/env.backup ~/media.backup ~/data.backup
+          rm -rf ~/backups
