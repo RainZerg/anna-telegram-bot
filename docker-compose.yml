@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   telegram-bot:
     build: .
@@ -10,7 +12,7 @@ services:
       - STUDENTS_CHAT_ID=${STUDENTS_CHAT_ID}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "/app/healthcheck.py"]
+      test: ["CMD", "python", "-c", "import os,sys,requests; r=requests.get(f'https://api.telegram.org/bot{os.environ[\"BOT_TOKEN\"]}/getMe'); sys.exit(0 if r.status_code==200 else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
