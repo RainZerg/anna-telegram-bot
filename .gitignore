@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 *.so
 .Python
 env/
@@ -23,6 +24,7 @@ wheels/
 
 # Environment variables
 .env
+.env.backup
 
 # Media files
 media/*
