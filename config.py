@@ -23,6 +23,7 @@ VAT_CODE = 1  # VAT 20%
 # Media files configuration
 MEDIA_DIR = Path("/app/media")
 COVER_IMAGE_PATH = MEDIA_DIR / "cover_image.jpg"
+LECTURER_IMAGE_PATH = MEDIA_DIR / "lecturer_image.jpg"
 
 # Database configuration
 DB_DIR = Path("/app/data")

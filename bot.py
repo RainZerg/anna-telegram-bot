@@ -157,8 +157,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif message_text == MENU_ABOUT_LECTURER:
-            await update.message.reply_text(
-                LECTURER_INFO,
+            await update.message.reply_photo(
+                photo=open(config.LECTURER_IMAGE_PATH, 'rb'),
+                caption=LECTURER_INFO,
                 parse_mode='MarkdownV2',
                 reply_markup=get_back_button()
             )
