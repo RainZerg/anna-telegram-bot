@@ -28,7 +28,11 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           eval $(ssh-agent -s)
           echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS=/bin/cat ssh-add ~/.ssh/deploy_key
-          echo "StrictHostKeyChecking no" > ~/.ssh/config
+          echo "Host *" > ~/.ssh/config
+          echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "  IdentityFile ~/.ssh/deploy_key" >> ~/.ssh/config
+          ls -la ~/.ssh
+          ssh-add -l
 
       - name: Test SSH Connection
         run: |
