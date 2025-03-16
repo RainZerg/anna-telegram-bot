@@ -26,38 +26,41 @@ jobs:
       - name: Install expect
         run: sudo apt-get update && sudo apt-get install -y expect
 
-      - name: Set up SSH key with passphrase
+      - name: Set up SSH key
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           # Start SSH agent
-          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          eval $(ssh-agent -s)
           
-          # Create .ssh directory with correct permissions
+          # Setup SSH directory
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           
-          # Write the private key to a file
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          # Write private key to file
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          # Add key to SSH agent with passphrase using expect
-          expect -f - <<'EOD'
+          # Debug: Check if key file exists and has content
+          ls -l ~/.ssh/deploy_key
+          
+          # Add key to agent
+          expect << 'EXPECT'
           spawn ssh-add ~/.ssh/deploy_key
           expect "Enter passphrase"
-          send "${{ secrets.SSH_KEY_PASSPHRASE }}\n"
+          send "${{ secrets.SSH_KEY_PASSPHRASE }}\r"
           expect eof
-          EOD
+          EXPECT
           
           # Add host to known hosts
           ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Test SSH Connection
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
-          echo "Testing SSH connection..."
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
+          ssh -o StrictHostKeyChecking=no -v ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "echo 'SSH connection successful!'"
 
       - name: Deploy to VPS
         env:
