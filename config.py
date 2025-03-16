@@ -17,7 +17,7 @@ COURSE_PRICE = 1000000  # Price in kopeks (10000 RUB)
 CURRENCY = "RUB"
 
 # Tax system configuration
-TAX_SYSTEM_CODE = 1  # Common tax system
+TAX_SYSTEM_CODE = 6  # Common tax system
 VAT_CODE = 1  # VAT 20%
 
 # Media files configuration
