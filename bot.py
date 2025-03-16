@@ -109,7 +109,7 @@ async def get_start_keyboard(user_id: int):
     keyboard = [
         [KeyboardButton(MENU_ABOUT_COURSE)],
         [KeyboardButton(MENU_ABOUT_LECTURER)],
-        [KeyboardButton(MENU_ACCESS if has_paid else MENU_PURCHASE)]
+        [KeyboardButton(MENU_ACCESS if has_paid else MENU_PURCHASE)],
         [KeyboardButton(MENU_CONTACT)]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
