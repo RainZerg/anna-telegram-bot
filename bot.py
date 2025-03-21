@@ -1,6 +1,6 @@
 """
 Telegram Bot for Course Sales and Management
-Updated by RainZerg on 2025-03-21 17:19:30 UTC
+Updated by RainZerg on 2025-03-21 17:47:17 UTC
 """
 
 import logging
@@ -65,14 +65,17 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE) -> None:
     for key in keys_to_clear:
         context.user_data.pop(key, None)
 
-def get_phone_keyboard() -> ReplyKeyboardMarkup:
-    """Creates a keyboard with phone number request button"""
-    return ReplyKeyboardMarkup([
+def get_phone_keyboard() -> InlineKeyboardMarkup:
+    """Creates an inline keyboard with phone number request button and cancel button"""
+    keyboard = [
         [
-            KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True),
-            KeyboardButton(CANCEL_BUTTON)
+            KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True)
+        ],
+        [
+            InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")
         ]
-    ], resize_keyboard=True)
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle successful payment"""
@@ -246,6 +249,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode='MarkdownV2',
                         reply_markup=keyboard
                     )
+
+            case "cancel_payment":
+                cleanup_user_data(context)
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=PAYMENT_CANCELLED,
+                    parse_mode='MarkdownV2',
+                    reply_markup=await get_start_keyboard(user_id)
+                )
+                # Remove any existing reply keyboard
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text="Выберите действие:",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+                return ConversationHandler.END           
 
             case "about_course":
                 await context.bot.send_message(
@@ -599,28 +618,23 @@ def main():
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("access", check_access))
 
-        # Add payment conversation handler
+          # Add payment conversation handler
         payment_conv_handler = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex(f'^{MENU_PURCHASE}$'), start_payment)],
             states={
-                AWAITING_EMAIL: [
-                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)
-                ],
-                AWAITING_NAME: [
-                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)
-                ],
+                AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)],
+                AWAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)],
                 AWAITING_PHONE: [
-                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
                     MessageHandler(filters.CONTACT, handle_phone),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
                 ],
             },
             fallbacks=[
-                CommandHandler('cancel', cancel_payment)
+                CommandHandler('cancel', cancel_payment),
+                CallbackQueryHandler(button_callback, pattern="^cancel_payment$")
             ]
         )
+
         # Add payment handlers
         application.add_handler(payment_conv_handler)
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
