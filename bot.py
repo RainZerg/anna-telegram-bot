@@ -1,12 +1,12 @@
 """
 Telegram Bot for Course Sales and Management
-Updated by RainZerg on 2025-03-21 19:13:30 UTC
+Updated by RainZerg on 2025-03-21 21:46:19 UTC
 """
 
 import logging
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from telegram import (
     Update, 
     InlineKeyboardButton, 
@@ -28,20 +28,7 @@ from telegram.ext import (
 )
 import config
 import text_constants
-from text_constants import (
-    MENU_ABOUT_COURSE, MENU_ABOUT_LECTURER, MENU_PURCHASE, MENU_ACCESS,
-    BACK_BUTTON, CANCEL_BUTTON, WRITE_BUTTON,
-    WELCOME_NEW, WELCOME_BACK,
-    PAYMENT_EMAIL_REQUEST, PAYMENT_EMAIL_INVALID, PAYMENT_EMAIL_THANKS, 
-    PAYMENT_INFO_REQUEST, PAYMENT_PHONE_REQUEST, PAYMENT_INFO_THANKS, 
-    PAYMENT_ERROR, PAYMENT_CANCELLED,
-    ALREADY_PURCHASED, ACCESS_SUCCESS, ACCESS_SUCCESS_NO_LINK,
-    ACCESS_NOT_PURCHASED, HELP_TEXT, GENERAL_ERROR,
-    COURSE_DESCRIPTION, LECTURER_INFO, MENU_UPDATED,
-    ACCESS_PAYMENT_SUCCESS, ACCESS_PAYMENT_SUCCESS_NO_LINK, 
-    MENU_CONTACT, CONTACT_MESSAGE,
-    escape_markdown
-)
+from text_constants import *
 from payment_handler import PaymentHandler, CustomerInfo
 
 # States for conversation handler
@@ -59,626 +46,330 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Clean up user data from context"""
-    keys_to_clear = ['state', 'email', 'full_name', 'phone']
-    for key in keys_to_clear:
-        context.user_data.pop(key, None)
+class BotHandlers:
+    """Centralized class for bot handlers and utilities"""
+    
+    def __init__(self, payment_handler: PaymentHandler):
+        self.payment_handler = payment_handler
 
-def get_phone_keyboard() -> ReplyKeyboardMarkup:
-    """Creates a reply keyboard with phone number request button and cancel button"""
-    return ReplyKeyboardMarkup([
-        [KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True)],
-        [KeyboardButton(CANCEL_BUTTON)]
-    ], resize_keyboard=True)
+    async def handle_access_check(self, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> Tuple[bool, Optional[str]]:
+        """Centralized access checking logic"""
+        has_paid, invite_link = await self.payment_handler.get_access_status(user_id)
+        if not invite_link and has_paid:
+            invite_link = await self.payment_handler.create_invite_link(user_id, context)
+        return has_paid, invite_link
 
-def get_cancel_keyboard() -> InlineKeyboardMarkup:
-    """Creates an inline keyboard with just a cancel button"""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")
-    ]])
-
-async def handle_successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle successful payment"""
-    user = update.effective_user
-    payment_info = update.message.successful_payment
-
-    try:
-        # First record the payment in the database
-        payment_handler.db.record_payment(
-            user_id=user.id,
-            username=user.username,
-            customer_info=context.user_data,
-            transaction_id=payment_info.provider_payment_charge_id,
-            amount=payment_info.total_amount / 100,
-            currency=payment_info.currency
-        )
-        logger.info(f"Successfully recorded payment for user {user.id}")
-
-        # Then generate invite link
-        invite_link = await payment_handler.create_invite_link(user.id, context)
-        
-        if invite_link:
-            escaped_link = escape_markdown(invite_link)
-            await update.message.reply_text(
-                text_constants.ACCESS_PAYMENT_SUCCESS.format(
-                    transaction_id=payment_info.provider_payment_charge_id,
-                    invite_link=escaped_link
-                ),
-                parse_mode='MarkdownV2'
-            )
+    async def generate_access_response(self, has_paid: bool, invite_link: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
+        """Centralized response generation for access checks"""
+        if has_paid:
+            escaped_link = escape_markdown(invite_link) if invite_link else None
+            text = (ACCESS_SUCCESS.format(invite_link=escaped_link) 
+                   if escaped_link else ACCESS_SUCCESS_NO_LINK)
         else:
-            await update.message.reply_text(
-                text_constants.ACCESS_PAYMENT_SUCCESS_NO_LINK.format(
-                    transaction_id=payment_info.provider_payment_charge_id
-                ),
-                parse_mode='MarkdownV2'
+            price_str = escape_markdown(f"{config.COURSE_PRICE / 100:,.0f}".replace(',', ' '))
+            text = ACCESS_NOT_PURCHASED.format(
+                course_title=text_constants.COURSE_TITLE_ESCAPED,
+                course_price=price_str
             )
+        keyboard = await self.get_start_keyboard(has_paid)
+        return text, keyboard
 
-        # Update keyboard immediately after successful payment
-        keyboard = await get_start_keyboard(user.id)
-        await update.message.reply_text(
-            text_constants.MENU_UPDATED,
-            parse_mode='MarkdownV2',
-            reply_markup=keyboard
-        )
-        
-        # Clean up user data after successful payment
-        cleanup_user_data(context)
+    @staticmethod
+    def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Clean up user data from context"""
+        keys_to_clear = ['state', 'email', 'full_name', 'phone']
+        for key in keys_to_clear:
+            context.user_data.pop(key, None)
 
-    except Exception as e:
-        logger.error(f"Error in successful payment handler for user {user.id}: {e}")
-        await update.message.reply_text(text_constants.GENERAL_ERROR)
+    @staticmethod
+    def get_phone_keyboard() -> ReplyKeyboardMarkup:
+        """Creates a reply keyboard with phone number request button"""
+        return ReplyKeyboardMarkup([
+            [KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True)],
+            [KeyboardButton(CANCEL_BUTTON)]
+        ], resize_keyboard=True)
 
-# Initialize payment handler with custom successful payment handler
-payment_handler = PaymentHandler(
-    provider_token=config.PROVIDER_TOKEN,
-    currency=config.CURRENCY,
-    students_chat_id=config.STUDENTS_CHAT_ID,
-    handle_successful_payment=handle_successful_payment
-)
+    @staticmethod
+    def get_cancel_keyboard() -> InlineKeyboardMarkup:
+        """Creates an inline keyboard with cancel button"""
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")
+        ]])
 
-async def get_start_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    """Creates the main menu keyboard based on user's access status"""
-    has_paid, _ = await payment_handler.get_access_status(user_id)
+    @staticmethod
+    def get_back_button() -> InlineKeyboardMarkup:
+        """Creates an inline keyboard with back button"""
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton(BACK_BUTTON, callback_data="start")
+        ]])
 
-    keyboard = [
-        [InlineKeyboardButton(MENU_ABOUT_COURSE, callback_data="about_course")],
-        [InlineKeyboardButton(MENU_ABOUT_LECTURER, callback_data="about_lecturer")],
-        [InlineKeyboardButton(
-            MENU_ACCESS if has_paid else MENU_PURCHASE, 
-            callback_data="access" if has_paid else "purchase"
-        )],
-        [InlineKeyboardButton(MENU_CONTACT, callback_data="contact")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    @staticmethod
+    def get_contact_buttons() -> InlineKeyboardMarkup:
+        """Creates contact buttons"""
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton(WRITE_BUTTON, url="https://t.me/Kalypina")],
+            [InlineKeyboardButton(BACK_BUTTON, callback_data="start")]
+        ])
 
-def get_contact_buttons() -> InlineKeyboardMarkup:
-    """Creates an inline keyboard with write and back buttons"""
-    keyboard = [
-        [InlineKeyboardButton(WRITE_BUTTON, url="https://t.me/Kalypina")],
-        [InlineKeyboardButton(BACK_BUTTON, callback_data="start")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    async def get_start_keyboard(self, has_paid: bool) -> InlineKeyboardMarkup:
+        """Creates the main menu keyboard based on user's access status"""
+        keyboard = [
+            [InlineKeyboardButton(MENU_ABOUT_COURSE, callback_data="about_course")],
+            [InlineKeyboardButton(MENU_ABOUT_LECTURER, callback_data="about_lecturer")],
+            [InlineKeyboardButton(
+                MENU_ACCESS if has_paid else MENU_PURCHASE, 
+                callback_data="access" if has_paid else "purchase"
+            )],
+            [InlineKeyboardButton(MENU_CONTACT, callback_data="contact")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
 
-def get_back_button() -> InlineKeyboardMarkup:
-    """Creates an inline keyboard with just a back button"""
-    keyboard = [[InlineKeyboardButton(BACK_BUTTON, callback_data="start")]]
-    return InlineKeyboardMarkup(keyboard)
-
-async def send_photo_message(
-    chat_id: int, 
-    photo_path: Path, 
-    caption: str, 
-    keyboard: InlineKeyboardMarkup,
-    context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """Helper function to send photo messages with proper resource management"""
-    try:
-        with open(photo_path, 'rb') as photo:
-            await context.bot.send_photo(
+    async def send_photo_message(
+        self,
+        chat_id: int, 
+        photo_path: Path, 
+        caption: str, 
+        keyboard: InlineKeyboardMarkup,
+        context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Helper function to send photo messages"""
+        try:
+            with open(photo_path, 'rb') as photo:
+                await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode='MarkdownV2',
+                    reply_markup=keyboard
+                )
+        except FileNotFoundError:
+            logger.error(f"Photo not found: {photo_path}")
+            await context.bot.send_message(
                 chat_id=chat_id,
-                photo=photo,
-                caption=caption,
+                text=caption,
                 parse_mode='MarkdownV2',
                 reply_markup=keyboard
             )
-    except FileNotFoundError:
-        logger.error(f"Photo not found: {photo_path}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=caption,
-            parse_mode='MarkdownV2',
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error sending photo message: {e}")
-        raise
+        except Exception as e:
+            logger.error(f"Error sending photo message: {e}")
+            raise
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for the /start command"""
-    user = update.effective_user
-    try:
-        logger.info(f"Processing /start command for user {user.id}")
-        keyboard = await get_start_keyboard(user.id)
-
-        if not config.COVER_IMAGE_PATH.exists():
-            logger.warning("Cover image not found. Sending text-only message.")
-            await update.message.reply_text(
-                WELCOME_NEW,
-                parse_mode='MarkdownV2',
-                reply_markup=keyboard
-            )
-            return
-
-        await send_photo_message(
-            chat_id=update.effective_chat.id,
-            photo_path=config.COVER_IMAGE_PATH,
-            caption=WELCOME_NEW,
-            keyboard=keyboard,
-            context=context
-        )
-    except Exception as e:
-        logger.error(f"Error in start command for user {user.id}: {e}")
-        await update.message.reply_text(GENERAL_ERROR)
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for button callbacks"""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    logger.info(f"Processing callback '{query.data}' for user {user_id}")
-    
-    try:
-        await query.answer()  # Answer callback query first
+    async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handler for /start command and start callback"""
+        user_id = update.effective_user.id
+        has_paid, _ = await self.payment_handler.get_access_status(user_id)
+        keyboard = await self.get_start_keyboard(has_paid)
         
-        match query.data:
-            case "start":
-                keyboard = await get_start_keyboard(user_id)
-                if config.COVER_IMAGE_PATH.exists():
-                    await send_photo_message(
-                        chat_id=query.message.chat_id,
-                        photo_path=config.COVER_IMAGE_PATH,
-                        caption=WELCOME_BACK,
-                        keyboard=keyboard,
-                        context=context
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=WELCOME_BACK,
-                        parse_mode='MarkdownV2',
-                        reply_markup=keyboard
-                    )
+        try:
+            if config.COVER_IMAGE_PATH.exists():
+                await self.send_photo_message(
+                    chat_id=update.effective_chat.id,
+                    photo_path=config.COVER_IMAGE_PATH,
+                    caption=WELCOME_BACK if context.user_data.get('seen_start') else WELCOME_NEW,
+                    keyboard=keyboard,
+                    context=context
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=WELCOME_BACK if context.user_data.get('seen_start') else WELCOME_NEW,
+                    parse_mode='MarkdownV2',
+                    reply_markup=keyboard
+                )
+            context.user_data['seen_start'] = True
+            
+        except Exception as e:
+            logger.error(f"Error in start handler for user {user_id}: {e}")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=GENERAL_ERROR,
+                reply_markup=keyboard
+            )
 
-            case "cancel_payment":
-                cleanup_user_data(context)
+    async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+        """Unified handler for button callbacks"""
+        query = update.callback_query
+        user_id = query.from_user.id
+        
+        try:
+            await query.answer()
+            
+            if query.data == "start":
+                await self.handle_start(update, context)
+                
+            elif query.data == "cancel_payment":
+                self.cleanup_user_data(context)
+                keyboard = await self.get_start_keyboard(False)
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=PAYMENT_CANCELLED,
                     parse_mode='MarkdownV2',
-                    reply_markup=await get_start_keyboard(user_id)
+                    reply_markup=keyboard
                 )
-                # Remove any existing reply keyboard
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text="Выберите действие:",
                     reply_markup=ReplyKeyboardRemove()
                 )
-                return ConversationHandler.END           
-
-            case "about_course":
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=COURSE_DESCRIPTION,
-                    parse_mode='MarkdownV2',
-                    reply_markup=get_back_button()
-                )
-
-            case "about_lecturer":
-                await send_photo_message(
-                    chat_id=query.message.chat_id,
-                    photo_path=config.LECTURER_IMAGE_PATH,
-                    caption=LECTURER_INFO,
-                    keyboard=get_back_button(),
-                    context=context
-                )
-
-            case "contact":
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=CONTACT_MESSAGE,
-                    reply_markup=get_contact_buttons()
-                )
-
-            case "purchase" | "access":
-                has_paid, invite_link = await payment_handler.get_access_status(user_id)
+                return ConversationHandler.END
                 
-                # Handle access button
-                if query.data == "access":
-                    if has_paid:
-                        if not invite_link:
-                            invite_link = await payment_handler.create_invite_link(user_id, context)
-                        
-                        escaped_link = escape_markdown(invite_link) if invite_link else None
-                        text = (ALREADY_PURCHASED.format(invite_link=escaped_link) 
-                               if escaped_link else ACCESS_SUCCESS_NO_LINK)
-                    else:
-                        # User tries to access without payment
-                        price_str = escape_markdown(
-                            f"{config.COURSE_PRICE / 100:,.0f}".replace(',', ' ')
-                        )
-                        text = ACCESS_NOT_PURCHASED.format(
-                            course_title=text_constants.COURSE_TITLE_ESCAPED,
-                            course_price=price_str
-                        )
-                    
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=text,
-                        parse_mode='MarkdownV2',
-                        reply_markup=await get_start_keyboard(user_id)
-                    )
+            elif query.data in ["about_course", "about_lecturer", "contact"]:
+                await self.handle_info_request(update, context, query.data)
                 
-                # Handle purchase button
-                elif query.data == "purchase":
-                    if has_paid:
-                        # User tries to purchase again
-                        if not invite_link:
-                            invite_link = await payment_handler.create_invite_link(user_id, context)
-                        
-                        escaped_link = escape_markdown(invite_link) if invite_link else None
-                        text = (ALREADY_PURCHASED.format(invite_link=escaped_link) 
-                               if escaped_link else ACCESS_SUCCESS_NO_LINK)
-                        
-                        await context.bot.send_message(
-                            chat_id=query.message.chat_id,
-                            text=text,
-                            parse_mode='MarkdownV2',
-                            reply_markup=await get_start_keyboard(user_id)
-                        )
-                    else:
-                        await context.bot.send_message(
-                            chat_id=query.message.chat_id,
-                            text=PAYMENT_EMAIL_REQUEST,
-                            parse_mode='MarkdownV2',
-                            reply_markup=get_cancel_keyboard()
-                        )
-                        context.user_data['state'] = AWAITING_EMAIL
-
-            case _:  # default case
-                logger.warning(f"Unexpected callback data: {query.data}")
-                return
-
-        # Delete the original message after handling any case
-        await query.message.delete()
-
-    except Exception as e:
-        logger.error(f"Error in button callback for user {user_id}: {e}")
-        try:
-            await query.answer()  # Ensure callback is answered even on error
-        except Exception:
-            pass  # Ignore if we can't answer the callback
-        
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=GENERAL_ERROR,
-            reply_markup=await get_start_keyboard(user_id)
-        )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for text messages"""
-    user = update.effective_user
-    try:
-        message_text = update.message.text
-        user_id = user.id
-
-        if message_text == MENU_ABOUT_COURSE:
-            await update.message.reply_text(
-                COURSE_DESCRIPTION,
-                parse_mode='MarkdownV2',
-                reply_markup=get_back_button()
+            elif query.data in ["purchase", "access"]:
+                await self.handle_access_request(update, context)
+                
+            await query.message.delete()
+            
+        except Exception as e:
+            logger.error(f"Error in button handler for user {user_id}: {e}")
+            keyboard = await self.get_start_keyboard(False)
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=GENERAL_ERROR,
+                reply_markup=keyboard
             )
 
-        elif message_text == MENU_ABOUT_LECTURER:
-            await send_photo_message(
-                chat_id=update.effective_chat.id,
+    async def handle_info_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE, info_type: str) -> None:
+        """Handler for information requests (about course, lecturer, contact)"""
+        chat_id = update.effective_chat.id
+        
+        if info_type == "about_course":
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=COURSE_DESCRIPTION,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_back_button()
+            )
+        
+        elif info_type == "about_lecturer":
+            await self.send_photo_message(
+                chat_id=chat_id,
                 photo_path=config.LECTURER_IMAGE_PATH,
                 caption=LECTURER_INFO,
-                keyboard=get_back_button(),
+                keyboard=self.get_back_button(),
                 context=context
             )
         
-        elif message_text == MENU_CONTACT:
-            await update.message.reply_text(
-                CONTACT_MESSAGE,
-                reply_markup=get_contact_buttons()
+        elif info_type == "contact":
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=CONTACT_MESSAGE,
+                reply_markup=self.get_contact_buttons()
             )
 
-        elif message_text in [MENU_PURCHASE, MENU_ACCESS]:
-            has_paid, invite_link = await payment_handler.get_access_status(user_id)
-
-            if has_paid and message_text == MENU_ACCESS:
-                if not invite_link:
-                    invite_link = await payment_handler.create_invite_link(user_id, context)
-
-                escaped_link = escape_markdown(invite_link) if invite_link else None
-                if escaped_link:
-                    await update.message.reply_text(
-                        ALREADY_PURCHASED.format(invite_link=escaped_link),
-                        parse_mode='MarkdownV2',
-                        reply_markup=await get_start_keyboard(user_id)
-                    )
-                else:
-                    await update.message.reply_text(
-                        ACCESS_SUCCESS_NO_LINK,
-                        parse_mode='MarkdownV2',
-                        reply_markup=await get_start_keyboard(user_id)
-                    )
-            elif not has_paid and message_text == MENU_PURCHASE:
-                await start_payment(update, context)
-
-    except Exception as e:
-        logger.error(f"Error handling message for user {user.id}: {e}")
-        await update.message.reply_text(
-            GENERAL_ERROR,
-            reply_markup=await get_start_keyboard(user.id)
-        )
-
-async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Starts the payment process by requesting user email"""
-    user = update.effective_user
-    try:
-        # Get user's full name from chat
-        first_name = update.message.chat.first_name or ""
-        last_name = update.message.chat.last_name or ""
-        full_name = f"{first_name} {last_name}".strip()
+    async def handle_access_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
+        """Unified handler for access and purchase requests"""
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
         
-        # Store the name if available
-        if full_name:
-            context.user_data['full_name'] = full_name
+        has_paid, invite_link = await self.handle_access_check(user_id, context)
+        text, keyboard = await self.generate_access_response(has_paid, invite_link)
         
-        # Always request email first
-        await update.message.reply_text(
-            PAYMENT_EMAIL_REQUEST,
-            parse_mode='MarkdownV2',
-            reply_markup=get_cancel_keyboard()
-        )
-        return AWAITING_EMAIL
-    except Exception as e:
-        logger.error(f"Error starting payment for user {user.id}: {e}")
-        await update.message.reply_text(GENERAL_ERROR)
-        return ConversationHandler.END
-
-async def handle_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the email input and requests name if needed"""
-    user = update.effective_user
-    email = update.message.text.strip()
-    
-    # Email validation using regex
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    if not re.match(email_pattern, email):
-        await update.message.reply_text(
-            PAYMENT_EMAIL_INVALID,
-            parse_mode='MarkdownV2'
-        )
-        return AWAITING_EMAIL
-    
-    context.user_data['email'] = email
-
-    # Check if we already have the name from Telegram profile
-    if 'full_name' in context.user_data:
-        await update.message.reply_text(
-            PAYMENT_PHONE_REQUEST,
-            parse_mode='MarkdownV2',
-            reply_markup=get_phone_keyboard()
-        )
-        return AWAITING_PHONE
-    else:
-        await update.message.reply_text(
-            PAYMENT_EMAIL_THANKS,
-            parse_mode='MarkdownV2',
-            reply_markup=get_cancel_keyboard()
-        )
-        return AWAITING_NAME
-
-async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the name input and requests phone"""
-    context.user_data['full_name'] = update.message.text
-
-    await update.message.reply_text(
-        PAYMENT_PHONE_REQUEST,
-        parse_mode='MarkdownV2',
-        reply_markup=get_phone_keyboard()
-    )
-    return AWAITING_PHONE
-
-async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the phone input and initiates payment"""
-    user = update.effective_user
-    
-    try:
-        # Get phone number either from contact or text message
-        phone = update.message.contact.phone_number if update.message.contact else update.message.text
-
-        # Verify all required data is present
-        required_fields = ['full_name', 'email']
-        missing_fields = [field for field in required_fields if field not in context.user_data]
-        
-        if missing_fields:
-            logger.error(f"Missing required fields for user {user.id}: {missing_fields}")
-            raise ValueError(f"Missing required customer info: {', '.join(missing_fields)}")
-
-        context.user_data['phone'] = phone
-
-        # Create CustomerInfo with all required fields
-        customer_info = CustomerInfo(
-            full_name=context.user_data['full_name'],
-            email=context.user_data['email'],
-            phone=phone
-        )
-
-        await update.message.reply_text(
-            PAYMENT_INFO_THANKS,
-            parse_mode='MarkdownV2',
-            reply_markup=await get_start_keyboard(user.id)
-        )
-
-        # Remove reply keyboard
-        await update.message.reply_text(
-            "Подготовка счета...",
-            reply_markup=ReplyKeyboardRemove()
-        )
-
-        await payment_handler.send_invoice(
-            update=update,
-            context=context,
-            customer_info=customer_info
-        )
-        
-        return ConversationHandler.END
-
-    except Exception as e:
-        logger.error(f"Error handling phone input for user {user.id}: {e}")
-        cleanup_user_data(context)
-        await update.message.reply_text(
-            PAYMENT_ERROR,
-            parse_mode='MarkdownV2',
-            reply_markup=await get_start_keyboard(user.id)
-        )
-        return ConversationHandler.END
-
-async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Cancels the payment process"""
-    user = update.effective_user
-    cleanup_user_data(context)
-    try:
-        # Send cancellation message with inline keyboard
-        await update.message.reply_text(
-            PAYMENT_CANCELLED,
-            parse_mode='MarkdownV2',
-            reply_markup=await get_start_keyboard(user.id)
-        )
-        # Remove reply keyboard if it exists
-        await update.message.reply_text(
-            "Выберите действие:",
-            reply_markup=ReplyKeyboardRemove()
-        )
-    except Exception as e:
-        logger.error(f"Error in cancel_payment for user {user.id}: {e}")
-        await update.message.reply_text(GENERAL_ERROR)
-    
-    return ConversationHandler.END
-
-async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for /access command - checks user's access status"""
-    user = update.effective_user
-    
-    try:
-        has_paid, invite_link = await payment_handler.get_access_status(user.id)
-
         if has_paid:
-            if not invite_link:
-                invite_link = await payment_handler.create_invite_link(user.id, context)
-                
-            if invite_link:
-                escaped_link = escape_markdown(invite_link)
-                await update.message.reply_text(
-                    ACCESS_SUCCESS.format(invite_link=escaped_link),
-                    parse_mode='MarkdownV2',
-                    reply_markup=await get_start_keyboard(user.id)
-                )
-            else:
-                await update.message.reply_text(
-                    ACCESS_SUCCESS_NO_LINK,
-                    parse_mode='MarkdownV2',
-                    reply_markup=await get_start_keyboard(user.id)
-                )
-        else:
-            price_str = escape_markdown(
-                f"{config.COURSE_PRICE / 100:,.0f}".replace(',', ' ')
-            )
-
-            await update.message.reply_text(
-                ACCESS_NOT_PURCHASED.format(
-                    course_title=text_constants.COURSE_TITLE_ESCAPED,
-                    course_price=price_str
-                ),
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
                 parse_mode='MarkdownV2',
-                reply_markup=await get_start_keyboard(user.id)
+                reply_markup=keyboard
             )
-    except Exception as e:
-        logger.error(f"Error checking access for user {user.id}: {e}")
-        await update.message.reply_text(
-            GENERAL_ERROR,
-            reply_markup=await get_start_keyboard(user.id)
-        )
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=PAYMENT_EMAIL_REQUEST,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_cancel_keyboard()
+            )
+            context.user_data['state'] = AWAITING_EMAIL
+            return AWAITING_EMAIL
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for the /help command"""
-    user = update.effective_user
-    await update.message.reply_text(
-        HELP_TEXT,
-        parse_mode='MarkdownV2',
-        reply_markup=await get_start_keyboard(user.id)
-    )
+    async def handle_successful_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handler for successful payments"""
+        user = update.effective_user
+        payment_info = update.message.successful_payment
+
+        try:
+            self.payment_handler.db.record_payment(
+                user_id=user.id,
+                username=user.username,
+                customer_info=context.user_data,
+                transaction_id=payment_info.provider_payment_charge_id,
+                amount=payment_info.total_amount / 100,
+                currency=payment_info.currency
+            )
+            
+            invite_link = await self.payment_handler.create_invite_link(user.id, context)
+            text, keyboard = await self.generate_access_response(True, invite_link)
+            
+            await update.message.reply_text(
+                text=text,
+                parse_mode='MarkdownV2',
+                reply_markup=keyboard
+            )
+            
+            self.cleanup_user_data(context)
+            
+        except Exception as e:
+            logger.error(f"Error in payment handler for user {user.id}: {e}")
+            await update.message.reply_text(GENERAL_ERROR)
 
 def main():
     """Main function to start the bot"""
     try:
+        # Initialize bot handlers
+        payment_handler = PaymentHandler(
+            provider_token=config.PROVIDER_TOKEN,
+            currency=config.CURRENCY,
+            students_chat_id=config.STUDENTS_CHAT_ID
+        )
+        handlers = BotHandlers(payment_handler)
+        
+        # Build application
         application = Application.builder().token(config.TOKEN).build()
 
-        # Add callback query handler for inline buttons FIRST
-        application.add_handler(CallbackQueryHandler(button_callback))
-
-        # Add command handlers
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("access", check_access))
-
+        # Add handlers
+        application.add_handler(CallbackQueryHandler(handlers.handle_button))
+        application.add_handler(CommandHandler("start", handlers.handle_start))
+        application.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text(
+            HELP_TEXT, parse_mode='MarkdownV2'
+        )))
+        
         # Add payment conversation handler
         payment_conv_handler = ConversationHandler(
             entry_points=[
-                MessageHandler(filters.Regex(f'^{MENU_PURCHASE}$'), start_payment),
-                CallbackQueryHandler(button_callback, pattern="^purchase$")
+                CallbackQueryHandler(handlers.handle_button, pattern="^purchase$")
             ],
             states={
                 AWAITING_EMAIL: [
-                    CallbackQueryHandler(button_callback, pattern="^cancel_payment$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)
+                    CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_access_request)
                 ],
                 AWAITING_NAME: [
-                    CallbackQueryHandler(button_callback, pattern="^cancel_payment$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)
+                    CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_access_request)
                 ],
                 AWAITING_PHONE: [
-                    CallbackQueryHandler(button_callback, pattern="^cancel_payment$"),
-                    MessageHandler(filters.CONTACT, handle_phone),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
+                    CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
+                    MessageHandler(
+                        filters.CONTACT | (filters.TEXT & ~filters.COMMAND),
+                        handlers.handle_access_request
+                    )
                 ],
             },
-            fallbacks=[CommandHandler('cancel', cancel_payment)]
+            fallbacks=[CommandHandler('cancel', lambda u, c: handlers.cleanup_user_data(c))]
         )
 
         # Add payment handlers
         application.add_handler(payment_conv_handler)
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
-        application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, handle_successful_payment))
-        
-        # Add handler for menu buttons BEFORE the general message handler
         application.add_handler(MessageHandler(
-            filters.Regex(f'^({MENU_PURCHASE}|{MENU_ACCESS}|{MENU_ABOUT_COURSE}|{MENU_ABOUT_LECTURER})$'),
-            handle_message
-        ))
-
-        # Add general message handler for all other text messages LAST
-        application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            handle_message
+            filters.SUCCESSFUL_PAYMENT,
+            handlers.handle_successful_payment
         ))
 
         logger.info("Bot is starting up...")
         application.run_polling()
+        
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")
 
