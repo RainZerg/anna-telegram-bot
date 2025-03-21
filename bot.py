@@ -107,12 +107,12 @@ async def get_start_keyboard(user_id: int):
     has_paid, _ = await payment_handler.get_access_status(user_id)
 
     keyboard = [
-        [KeyboardButton(MENU_ABOUT_COURSE)],
-        [KeyboardButton(MENU_ABOUT_LECTURER)],
-        [KeyboardButton(MENU_ACCESS if has_paid else MENU_PURCHASE)],
-        [KeyboardButton(MENU_CONTACT)]
+        [InlineKeyboardButton(MENU_ABOUT_COURSE, callback_data="about_course")],
+        [InlineKeyboardButton(MENU_ABOUT_LECTURER, callback_data="about_lecturer")],
+        [InlineKeyboardButton(MENU_ACCESS if has_paid else MENU_PURCHASE, callback_data="access" if has_paid else "purchase")],
+        [InlineKeyboardButton(MENU_CONTACT, callback_data="contact")]
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    return InlineKeyboardMarkup(keyboard)
 
 def get_contact_buttons():
     """Creates an inline keyboard with write and back buttons"""
@@ -216,35 +216,91 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "start":
-        try:
-            keyboard = await get_start_keyboard(query.from_user.id)
+    try:
+        match query.data:
+            case "start":
+                keyboard = await get_start_keyboard(query.from_user.id)
+                if not config.COVER_IMAGE_PATH.exists():
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=WELCOME_BACK,
+                        parse_mode='MarkdownV2',
+                        reply_markup=keyboard
+                    )
+                else:
+                    await context.bot.send_photo(
+                        chat_id=query.message.chat_id,
+                        photo=open(config.COVER_IMAGE_PATH, 'rb'),
+                        caption=WELCOME_BACK,
+                        parse_mode='MarkdownV2',
+                        reply_markup=keyboard
+                    )
 
-            if not config.COVER_IMAGE_PATH.exists():
+            case "about_course":
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
-                    text=WELCOME_BACK,
+                    text=COURSE_DESCRIPTION,
                     parse_mode='MarkdownV2',
-                    reply_markup=keyboard
+                    reply_markup=get_back_button()
                 )
-            else:
+
+            case "about_lecturer":
                 await context.bot.send_photo(
                     chat_id=query.message.chat_id,
-                    photo=open(config.COVER_IMAGE_PATH, 'rb'),
-                    caption=WELCOME_BACK,
+                    photo=open(config.LECTURER_IMAGE_PATH, 'rb'),
+                    caption=LECTURER_INFO,
                     parse_mode='MarkdownV2',
-                    reply_markup=keyboard
+                    reply_markup=get_back_button()
                 )
 
-            await query.message.delete()
+            case "contact":
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=CONTACT_MESSAGE,
+                    reply_markup=get_contact_buttons()
+                )
 
-        except Exception as e:
-            logger.error(f"Error in button callback: {e}")
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=GENERAL_ERROR,
-                reply_markup=await get_start_keyboard(query.from_user.id)
-            )
+            case "purchase" | "access":
+                has_paid, invite_link = await payment_handler.get_access_status(query.from_user.id)
+                
+                if has_paid and query.data == "access":
+                    if not invite_link:
+                        invite_link = await payment_handler.create_invite_link(query.from_user.id, context)
+                    
+                    escaped_link = escape_markdown(invite_link) if invite_link else None
+                    text = (ALREADY_PURCHASED.format(invite_link=escaped_link) 
+                           if escaped_link else ACCESS_SUCCESS_NO_LINK)
+                    
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=text,
+                        parse_mode='MarkdownV2',
+                        reply_markup=await get_start_keyboard(query.from_user.id)
+                    )
+                elif not has_paid and query.data == "purchase":
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=PAYMENT_EMAIL_REQUEST,
+                        parse_mode='MarkdownV2',
+                        reply_markup=ReplyKeyboardMarkup([[KeyboardButton(CANCEL_BUTTON)]], 
+                                                       resize_keyboard=True)
+                    )
+                    context.user_data['state'] = AWAITING_EMAIL
+
+            case _:  # default case
+                logger.warning(f"Unexpected callback data: {query.data}")
+                return
+
+        # Delete the original message after handling any case
+        await query.message.delete()
+
+    except Exception as e:
+        logger.error(f"Error in button callback: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=GENERAL_ERROR,
+            reply_markup=await get_start_keyboard(query.from_user.id)
+        )
 
 async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Starts the payment process by requesting user email"""
