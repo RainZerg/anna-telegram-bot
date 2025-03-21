@@ -308,14 +308,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=await get_start_keyboard(user_id)
                     )
                 elif not has_paid and query.data == "purchase":
+                    cancel_keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")]
+                    ])
                     await context.bot.send_message(
                         chat_id=query.message.chat_id,
                         text=PAYMENT_EMAIL_REQUEST,
                         parse_mode='MarkdownV2',
-                        reply_markup=ReplyKeyboardMarkup(
-                            [[KeyboardButton(CANCEL_BUTTON)]], 
-                            resize_keyboard=True
-                        )
+                        reply_markup=cancel_keyboard
                     )
                     context.user_data['state'] = AWAITING_EMAIL
 
