@@ -199,20 +199,21 @@ class BotHandlers:
                 
             elif query.data == "cancel_payment":
                 self.cleanup_user_data(context)
-                keyboard = await self.get_start_keyboard(False)
+                # Delete the current message (the one with the payment info)
+                await query.message.delete()
+                
+                # Send cancellation message
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=PAYMENT_CANCELLED,
                     parse_mode='MarkdownV2',
-                    reply_markup=keyboard
+                    reply_markup=ReplyKeyboardRemove()  # Remove any existing reply keyboard
                 )
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text="Выберите действие:",
-                    reply_markup=ReplyKeyboardRemove()
-                )
-                return ConversationHandler.END
                 
+                # Call handle_start to show the main menu
+                await self.handle_start(update, context)
+                return ConversationHandler.END               
+
             elif query.data in ["about_course", "about_lecturer", "contact"]:
                 await self.handle_info_request(update, context, query.data)
                 
