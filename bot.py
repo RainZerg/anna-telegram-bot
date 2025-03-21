@@ -13,6 +13,7 @@ from telegram import (
     InlineKeyboardMarkup, 
     KeyboardButton, 
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     Contact
 )
 from telegram.ext import (
@@ -514,11 +515,22 @@ async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Cancels the payment process"""
     user = update.effective_user
     cleanup_user_data(context)
-    await update.message.reply_text(
-        PAYMENT_CANCELLED,
-        parse_mode='MarkdownV2',
-        reply_markup=await get_start_keyboard(user.id)
-    )
+    try:
+        # Send cancellation message with inline keyboard
+        await update.message.reply_text(
+            PAYMENT_CANCELLED,
+            parse_mode='MarkdownV2',
+            reply_markup=await get_start_keyboard(user.id)
+        )
+        # Remove the keyboard
+        await update.message.reply_text(
+            "Выберите действие:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    except Exception as e:
+        logger.error(f"Error in cancel_payment for user {user.id}: {e}")
+        await update.message.reply_text(GENERAL_ERROR)
+    
     return ConversationHandler.END
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -591,19 +603,24 @@ def main():
         payment_conv_handler = ConversationHandler(
             entry_points=[MessageHandler(filters.Regex(f'^{MENU_PURCHASE}$'), start_payment)],
             states={
-                AWAITING_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)],
-                AWAITING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)],
+                AWAITING_EMAIL: [
+                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email)
+                ],
+                AWAITING_NAME: [
+                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)
+                ],
                 AWAITING_PHONE: [
+                    MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment),
                     MessageHandler(filters.CONTACT, handle_phone),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)
                 ],
             },
             fallbacks=[
-                CommandHandler('cancel', cancel_payment),
-                MessageHandler(filters.Regex(f'^{CANCEL_BUTTON}$'), cancel_payment)
+                CommandHandler('cancel', cancel_payment)
             ]
         )
-
         # Add payment handlers
         application.add_handler(payment_conv_handler)
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
