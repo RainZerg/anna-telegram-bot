@@ -165,6 +165,11 @@ def get_back_button() -> InlineKeyboardMarkup:
     keyboard = [[InlineKeyboardButton(BACK_BUTTON, callback_data="start")]]
     return InlineKeyboardMarkup(keyboard)
 
+def get_cancel_button()  -> InlineKeyboardMarkup:
+    """Creates an inline keyboard with just a cancel button"""
+    keyboard = [[InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")]]
+    return InlineKeyboardMarkup(keyboard)
+
 async def send_photo_message(
     chat_id: int, 
     photo_path: Path, 
@@ -308,14 +313,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         reply_markup=await get_start_keyboard(user_id)
                     )
                 elif not has_paid and query.data == "purchase":
-                    cancel_keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(CANCEL_BUTTON, callback_data="cancel_payment")]
-                    ])
+
                     await context.bot.send_message(
                         chat_id=query.message.chat_id,
                         text=PAYMENT_EMAIL_REQUEST,
                         parse_mode='MarkdownV2',
-                        reply_markup=cancel_keyboard
+                        reply_markup=get_cancel_button()
                     )
                     context.user_data['state'] = AWAITING_EMAIL
 
@@ -415,7 +418,7 @@ async def start_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             PAYMENT_EMAIL_REQUEST,
             parse_mode='MarkdownV2',
-            reply_markup=ReplyKeyboardMarkup([[KeyboardButton(CANCEL_BUTTON)]], resize_keyboard=True)
+            reply_markup=get_cancel_button()
         )
         return AWAITING_EMAIL
     except Exception as e:
