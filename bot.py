@@ -11,6 +11,7 @@ from telegram import (
     Update, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
+    InputMediaPhoto,
     KeyboardButton, 
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -120,6 +121,7 @@ class BotHandlers:
                 MENU_ACCESS if has_paid else MENU_PURCHASE, 
                 callback_data="access" if has_paid else "purchase"
             )],
+            [InlineKeyboardButton(MENU_REVIEWS, callback_data="reviews")],
             [InlineKeyboardButton(MENU_CONTACT, callback_data="contact")]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -190,38 +192,32 @@ class BotHandlers:
         """Unified handler for button callbacks"""
         query = update.callback_query
         user_id = query.from_user.id
-        
         try:
             await query.answer()
-            
-            if query.data == "start":
-                await self.handle_start(update, context)
-                
-            elif query.data == "cancel_payment":
-                self.cleanup_user_data(context)
-                # Delete the current message (the one with the payment info)
-                await query.message.delete()
-                
-                # Send cancellation message
-                await context.bot.send_message(
-                    chat_id=query.message.chat_id,
-                    text=PAYMENT_CANCELLED,
-                    parse_mode='MarkdownV2',
-                    reply_markup=ReplyKeyboardRemove()  # Remove any existing reply keyboard
-                )
-                
-                # Call handle_start to show the main menu
-                await self.handle_start(update, context)
-                return ConversationHandler.END               
 
-            elif query.data in ["about_course", "about_lecturer", "contact"]:
-                await self.handle_info_request(update, context, query.data)
-                
-            elif query.data in ["purchase", "access"]:
-                await self.handle_access_request(update, context)
-                
+            match query.data:
+                case "start":
+                    await self.handle_start(update, context)
+                case "cancel_payment":
+                    self.cleanup_user_data(context)
+                    await query.message.delete()
+                    await context.bot.send_message(
+                        chat_id=query.message.chat_id,
+                        text=PAYMENT_CANCELLED,
+                        parse_mode='MarkdownV2',
+                        reply_markup=ReplyKeyboardRemove()
+                    )
+                    await self.handle_start(update, context)
+                    return ConversationHandler.END
+                case "about_course" | "about_lecturer" | "contact" | "reviews":
+                    await self.handle_info_request(update, context, query.data)
+                case "purchase" | "access":
+                    await self.handle_access_request(update, context)
+                case _:
+                    # Handle unexpected data, maybe log or pass
+                    pass
+
             await query.message.delete()
-            
         except Exception as e:
             logger.error(f"Error in button handler for user {user_id}: {e}")
             keyboard = await self.get_start_keyboard(False)
@@ -235,29 +231,65 @@ class BotHandlers:
         """Handler for information requests (about course, lecturer, contact)"""
         chat_id = update.effective_chat.id
         
-        if info_type == "about_course":
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=COURSE_DESCRIPTION,
-                parse_mode='MarkdownV2',
-                reply_markup=self.get_back_button()
-            )
-        
-        elif info_type == "about_lecturer":
-            await self.send_photo_message(
-                chat_id=chat_id,
-                photo_path=config.LECTURER_IMAGE_PATH,
-                caption=LECTURER_INFO,
-                keyboard=self.get_back_button(),
-                context=context
-            )
-        
-        elif info_type == "contact":
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=CONTACT_MESSAGE,
-                reply_markup=self.get_contact_buttons()
-            )
+        match info_type:
+            case "about_course":
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=COURSE_DESCRIPTION,
+                    parse_mode='MarkdownV2',
+                    reply_markup=self.get_back_button()
+                )
+            
+            case "about_lecturer":
+                await self.send_photo_message(
+                    chat_id=chat_id,
+                    photo_path=config.LECTURER_IMAGE_PATH,
+                    caption=LECTURER_INFO,
+                    keyboard=self.get_back_button(),
+                    context=context
+                )
+            
+            case "contact":
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=CONTACT_MESSAGE,
+                    reply_markup=self.get_contact_buttons()
+                )
+            case "reviews":
+                media_group = []
+                try:
+                    reviews_path = config.REVIEWS_PATH
+                    for review_file in reviews_path.glob('*.jpg'):
+                            with open(review_file, 'rb') as photo:
+                                media_group.append(InputMediaPhoto(media=photo))
+                    if media_group:
+                            await context.bot.send_media_group(
+                                chat_id=chat_id,
+                                media=media_group
+                            )
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=REVIEWS_MESSAGE,
+                                parse_mode='MarkdownV2',
+                                reply_markup=self.get_back_button()
+                            )
+                    else:
+                        await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=NO_REVIEWS_MESSAGE,
+                                parse_mode='MarkdownV2',
+                                reply_markup=self.get_back_button()
+                            )
+                except Exception as e:
+                        logger.error(f"Error sending reviews: {e}")
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=GENERAL_ERROR,
+                            reply_markup=self.get_back_button()
+                        )
+            case _:
+                await self.handle_start(update, context)
+
 
     async def handle_access_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
         """Unified handler for access and purchase requests"""

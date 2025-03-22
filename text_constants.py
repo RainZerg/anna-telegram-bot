@@ -62,6 +62,10 @@ COURSE_DESCRIPTION = f"""
 
 ✨ *Важно\\!* Доступ к курсу остается у вас навсегда\\!"""
 
+#Reviews
+REVIEWS_MESSAGE = "Отзывы моих учеников 🌟"
+NO_REVIEWS_MESSAGE = "No reviews avaliable at the moment\\."
+
 # Lecturer Information
 LECTURER_INFO = """
 👨‍🏫 *О ведущей курса*
@@ -90,7 +94,8 @@ MENU_ABOUT_COURSE = "📚 Подробнее о курсе"
 MENU_ABOUT_LECTURER = "👨‍🏫 О ведущей курса"
 MENU_PURCHASE = "💳 Купить"
 MENU_ACCESS = "🎓 Доступ к курсу"
-MENU_CONTACT = "👩‍💼 Связаться"
+MENU_REVIEWS = "💬 Отзывы"
+MENU_CONTACT = "👩‍💼 Задать вопрос"
 BACK_BUTTON = "🔙 Назад"
 CANCEL_BUTTON = "🔙 Отмена"
 WRITE_BUTTON = "✍️ Написать"
