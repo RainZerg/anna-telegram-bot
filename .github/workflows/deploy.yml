@@ -66,10 +66,10 @@ jobs:
           echo "Setting up permissions and starting bot..."
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             chmod +x start.sh stop.sh entrypoint.sh && \
-            docker compose down || true && \
-            docker compose pull && \
-            docker compose up -d && \
-            sleep 5 && \
+            ./stop.sh && \
+            sleep 10 && \
+            ./start.sh && \
+            sleep 10 && \
             docker compose ps && \
             docker compose logs --tail=50"
 
