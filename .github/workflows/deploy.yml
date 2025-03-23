@@ -67,20 +67,17 @@ jobs:
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
             chmod +x start.sh stop.sh entrypoint.sh && \
             ./stop.sh && \
-            sleep 10 && \
-            ./start.sh && \
-            sleep 10 && \
-            docker compose ps && \
-            docker compose logs --tail=50"
-
+            sleep 5 && \
+            timeout 10s ./start.sh || true"
+            
       - name: Check deployment status
         env:
           SSH_AUTH_SOCK: /tmp/ssh_agent.sock
         run: |
           echo "Checking deployment status..."
           ssh ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} "cd ~/anna-telegram-bot && \
-            docker compose ps && \
-            docker compose logs --tail=50"
+            docker compose ps --format 'table {{.Name}}\t{{.Status}}' && \
+            docker compose logs --tail=20"
 
       - name: Cleanup
         if: always()
