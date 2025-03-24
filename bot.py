@@ -1,6 +1,6 @@
 """
 Telegram Bot for Course Sales and Management
-Updated by RainZerg on 2025-03-21 21:46:19 UTC
+Updated by RainZerg on 2025-03-24 12:55:43 UTC
 """
 
 import logging
@@ -78,7 +78,7 @@ class BotHandlers:
     @staticmethod
     def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE) -> None:
         """Clean up user data from context"""
-        keys_to_clear = ['state', 'email', 'full_name', 'phone']
+        keys_to_clear = ['state', 'email', 'full_name', 'phone', 'awaiting_custom_name', 'awaiting_manual_phone']
         for key in keys_to_clear:
             context.user_data.pop(key, None)
 
@@ -87,6 +87,7 @@ class BotHandlers:
         """Creates a reply keyboard with phone number request button"""
         return ReplyKeyboardMarkup([
             [KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True)],
+            [KeyboardButton("📝 Ввести номер вручную")],
             [KeyboardButton(CANCEL_BUTTON)]
         ], resize_keyboard=True)
 
@@ -156,6 +157,148 @@ class BotHandlers:
             logger.error(f"Error sending photo message: {e}")
             raise
 
+    async def handle_email(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handler for processing email input"""
+        email = update.message.text.strip()
+        
+        # Basic email validation using regex
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, email):
+            await update.message.reply_text(
+                text=PAYMENT_EMAIL_INVALID,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_cancel_keyboard()
+            )
+            return AWAITING_EMAIL
+        
+        # Store email in user data
+        context.user_data['email'] = email
+        
+        # Get user's full name from Telegram
+        user = update.effective_user
+        full_name = f"{user.first_name} {user.last_name if user.last_name else ''}"
+        
+        # Create keyboard with options
+        keyboard = [
+            [KeyboardButton(f"✅ Использовать имя из профиля: {full_name}")],
+            [KeyboardButton("📝 Ввести другое имя")],
+            [KeyboardButton(CANCEL_BUTTON)]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            text=USE_PROFILE_NAME_REQUEST.format(full_name=full_name),
+            parse_mode='MarkdownV2',
+            reply_markup=reply_markup
+        )
+        
+        return AWAITING_NAME
+
+    async def handle_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handler for processing full name input"""
+        message_text = update.message.text.strip()
+        
+        # If user chose to use profile name
+        if message_text.startswith("✅ Использовать имя из профиля:"):
+            user = update.effective_user
+            full_name = f"{user.first_name} {user.last_name if user.last_name else ''}"
+            context.user_data['full_name'] = full_name
+            return await self.request_phone(update, context)
+        
+        # If user wants to enter different name
+        if message_text == "📝 Ввести другое имя":
+            await update.message.reply_text(
+                text=PAYMENT_NAME_REQUEST,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_cancel_keyboard()
+            )
+            context.user_data['awaiting_custom_name'] = True
+            return AWAITING_NAME
+        
+        # If user is entering custom name
+        if context.user_data.get('awaiting_custom_name'):
+            context.user_data['full_name'] = message_text
+            context.user_data.pop('awaiting_custom_name', None)
+            return await self.request_phone(update, context)
+        
+        return AWAITING_NAME
+
+    async def request_phone(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Request phone number with options"""
+        keyboard = [
+            [KeyboardButton(PHONE_BUTTON_TEXT, request_contact=True)],
+            [KeyboardButton("📝 Ввести номер вручную")],
+            [KeyboardButton(CANCEL_BUTTON)]
+        ]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            text=PAYMENT_PHONE_REQUEST,
+            parse_mode='MarkdownV2',
+            reply_markup=reply_markup
+        )
+        
+        return AWAITING_PHONE
+
+    async def handle_phone(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Handler for processing phone number input"""
+        message_text = update.message.text.strip() if update.message.text else None
+        
+        if message_text == "📝 Ввести номер вручную":
+            await update.message.reply_text(
+                text=PAYMENT_PHONE_MANUAL_REQUEST,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_cancel_keyboard()
+            )
+            context.user_data['awaiting_manual_phone'] = True
+            return AWAITING_PHONE
+        
+        if update.message.contact:
+            phone = update.message.contact.phone_number
+        elif context.user_data.get('awaiting_manual_phone'):
+            phone = message_text
+        else:
+            return AWAITING_PHONE
+        
+        # Basic phone validation
+        phone_pattern = r'^\+?[1-9]\d{1,14}$'
+        if not re.match(phone_pattern, phone):
+            await update.message.reply_text(
+                text=PAYMENT_PHONE_INVALID,
+                parse_mode='MarkdownV2',
+                reply_markup=self.get_phone_keyboard()
+            )
+            return AWAITING_PHONE
+        
+        context.user_data['phone'] = phone
+        context.user_data.pop('awaiting_manual_phone', None)
+        
+        # Thank the user and prepare invoice
+        await update.message.reply_text(
+            text=PAYMENT_INFO_THANKS,
+            parse_mode='MarkdownV2',
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Create customer info object
+        customer_info = CustomerInfo(
+            full_name=context.user_data['full_name'],
+            email=context.user_data['email'],
+            phone=context.user_data['phone']
+        )
+        
+        # Send invoice
+        try:
+            await self.payment_handler.send_invoice(update, context, customer_info)
+        except Exception as e:
+            logger.error(f"Error sending invoice: {e}")
+            await update.message.reply_text(
+                text=PAYMENT_ERROR,
+                parse_mode='MarkdownV2'
+            )
+        
+        return ConversationHandler.END
+
     async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler for /start command and start callback"""
         user_id = update.effective_user.id
@@ -211,10 +354,18 @@ class BotHandlers:
                     return ConversationHandler.END
                 case "about_course" | "about_lecturer" | "contact" | "reviews":
                     await self.handle_info_request(update, context, query.data)
-                case "purchase" | "access":
+                case "access":
                     await self.handle_access_request(update, context)
+                case "purchase":
+                    self.cleanup_user_data(context)
+                    await query.message.reply_text(
+                        PAYMENT_EMAIL_REQUEST,
+                        parse_mode='MarkdownV2',
+                        reply_markup=self.get_cancel_keyboard()
+                    )
+                    await query.message.delete()
+                    return AWAITING_EMAIL
                 case _:
-                    # Handle unexpected data, maybe log or pass
                     pass
 
             await query.message.delete()
@@ -290,31 +441,20 @@ class BotHandlers:
             case _:
                 await self.handle_start(update, context)
 
-
-    async def handle_access_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> Optional[int]:
-        """Unified handler for access and purchase requests"""
+    async def handle_access_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Only handles access checks, payment is handled by conversation"""
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         
         has_paid, invite_link = await self.handle_access_check(user_id, context)
         text, keyboard = await self.generate_access_response(has_paid, invite_link)
         
-        if has_paid:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode='MarkdownV2',
-                reply_markup=keyboard
-            )
-        else:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=PAYMENT_EMAIL_REQUEST,
-                parse_mode='MarkdownV2',
-                reply_markup=self.get_cancel_keyboard()
-            )
-            context.user_data['state'] = AWAITING_EMAIL
-            return AWAITING_EMAIL
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode='MarkdownV2',
+            reply_markup=keyboard
+        )
 
     async def handle_successful_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handler for successful payments"""
@@ -361,7 +501,7 @@ def main():
         application = Application.builder().token(config.TOKEN).build()
 
         # Add handlers
-        application.add_handler(CallbackQueryHandler(handlers.handle_button))
+
         application.add_handler(CommandHandler("start", handlers.handle_start))
         application.add_handler(CommandHandler("help", lambda u, c: u.message.reply_text(
             HELP_TEXT, parse_mode='MarkdownV2'
@@ -375,17 +515,17 @@ def main():
             states={
                 AWAITING_EMAIL: [
                     CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_access_request)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_email)
                 ],
                 AWAITING_NAME: [
                     CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_access_request)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_name)
                 ],
                 AWAITING_PHONE: [
                     CallbackQueryHandler(handlers.handle_button, pattern="^cancel_payment$"),
                     MessageHandler(
                         filters.CONTACT | (filters.TEXT & ~filters.COMMAND),
-                        handlers.handle_access_request
+                        handlers.handle_phone
                     )
                 ],
             },
@@ -394,6 +534,7 @@ def main():
 
         # Add payment handlers
         application.add_handler(payment_conv_handler)
+        application.add_handler(CallbackQueryHandler(handlers.handle_button))
         application.add_handler(PreCheckoutQueryHandler(payment_handler.handle_pre_checkout_query))
         application.add_handler(MessageHandler(
             filters.SUCCESSFUL_PAYMENT,
