@@ -392,13 +392,21 @@ class BotHandlers:
                 )
             
             case "about_lecturer":
-                await self.send_photo_message(
-                    chat_id=chat_id,
-                    photo_path=config.LECTURER_IMAGE_PATH,
-                    caption=LECTURER_INFO,
-                    keyboard=self.get_back_button(),
-                    context=context
-                )
+                if config.LECTURER_IMAGE_PATH.exists():
+                    await self.send_photo_message(
+                        chat_id=chat_id,
+                        photo_path=config.LECTURER_IMAGE_PATH,
+                        caption=LECTURER_INFO,
+                        keyboard=self.get_back_button(),
+                        context=context
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=LECTURER_INFO,
+                        parse_mode='MarkdownV2',
+                        reply_markup=self.get_back_button()
+                    )
             
             case "contact":
                 await context.bot.send_message(
