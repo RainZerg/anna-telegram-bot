@@ -59,6 +59,7 @@ jobs:
           echo "Syncing repository to VPS..."
           rsync -avz --delete \
             --exclude='.env' \
+            --exclude='media/*' \
             ./ ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:~/anna-telegram-bot/
 
       - name: Setup and start bot
